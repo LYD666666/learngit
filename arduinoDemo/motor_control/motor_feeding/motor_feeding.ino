@@ -40,12 +40,13 @@ char datastausF [] = "{\"caststaus\":finish}";
 char castbegin1 [] = "{\"castbegin\":%s}";  
 
 unsigned short json_len = 4;            // json长度
-long weight = 2500;
-long weight_weizhi;   //待投量
-long weight2 = 50;
-long weight_zhenshi;  //真实投喂量
-const char* castbegin;     //投喂开关
+long weight;          //总量
+long weight_Notyet;   //待投量
+long weight_default = 50;  //默认量
+long weight_real;  //真实投喂量
+long weight_revise; //想修改的投喂量
 int castbegin_num;
+int connectNum = 0;
 
 // WiFi
 const char *ssid = "STOP607_2.4";         // Enter your WiFi name      STOP607_2.4  iQOO3
@@ -59,11 +60,14 @@ const char *mqtt_username = "cwl";
 const char *mqtt_password = "19260817";
 const int mqtt_port = 1883; 
 
+//开关阀门状态标志位
+int flag ;
+
 //实例对象
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-//硬件初始化
+//  1   硬件初始化
 void HarewardInit(void)
 {
   // Set software serial baud to 115200;
@@ -80,8 +84,13 @@ void HarewardInit(void)
   WiFi.begin(ssid, password);
   while (!WiFi.isConnected())
   {
+    connectNum++;
     delay(500);
     Serial.println("Connecting to WiFi..");
+    if(connectNum>=5)
+    {
+      ESP.restart();
+      }
   }
   Serial.println("Connected to the WiFi network");
 
@@ -129,7 +138,7 @@ void HarewardInit(void)
 void feeding1(void)
 {
    digitalWrite(valve,HIGH);
-   delay(5000);
+   delay(9000);
    client.publish(topic1,datastausB);
 }
 
@@ -142,48 +151,65 @@ void tasktomotor(int countt,int weight1)
       //打开
       //断开NC,关阀门
       digitalWrite(valve,LOW); 
-
-      delay(5000);
-      long count = ReadCount() - count0;
+      delay(9000);
+      count = ReadCount() - count0;
       count = ((count - count1)/3000);
-      weight_zhenshi = count;
-      weight_weizhi = weight - weight_zhenshi;
-      Serial.print("publish weight\r\n");
-      Serial.print(weight_zhenshi);
-      
-      if(weight_weizhi < weight2)
-      {
-        Set_Pwm(-500); //下滑推杆开始投料
-        delay(6000);  //等待漏料
-        Set_Pwm(0);
-        snprintf(msgJson, 40, dataWeight1, weight_zhenshi); //将称重数据套入dataWeight模板中, 生成的字符串传给msgJson
+
+      weight_real = count;            //这时的count为真实量 //因为阀门关上并稳定了，不会有料的进来，设置的值一般在一半也不会挤压
+      weight = weight - weight_real;  //总量-真实量=下次待投量
+      weight_Notyet = weight;
+
+      Serial.println(weight_real);
+      Serial.println(weight_Notyet);
+
+        snprintf(msgJson, 40, dataWeight1, weight_real); //将称重数据套入dataWeight模板中, 生成的字符串传给msgJson
         json_len = strlen(msgJson);               // msgJson的长度
-        client.publish(topic1, msgJson);
-        }
-      else{
-        Set_Pwm(-500); //下滑推杆开始投料
-        delay(6000);  //等待漏料
-        Set_Pwm(0);
-        snprintf(msgJson, 40, dataWeight1, weight_zhenshi); //将称重数据套入dataWeight模板中, 生成的字符串传给msgJson
-        json_len = strlen(msgJson);               // msgJson的长度
-        client.publish(topic1, msgJson);
-        
-        }
-      delay(50);
+        client.publish(topic1, msgJson); 
+
+      flag = 1;
+      whenisfinish();
+      ResetWeight(); //投料和复位重量
+    }
+  }
+
+// 6 判断投喂是否最后一次
+void whenisfinish (void)
+{
+   if(weight_Notyet < weight_default&&weight_Notyet>0)
+   {
+      weight_default = weight_Notyet;
+
+    }
+    else if (weight_Notyet<=0)
+    {
+            weight = 0;
+            flag = 0;
+      }
+  }
+  
+
+// 7 投料和复位重量
+void ResetWeight(void)
+{
+      Set_Pwm(-500); //下滑推杆开始投料
+      delay(7000);  //等待漏料
+      Set_Pwm(0);
+       
+      delay(500);
       client.publish(topic1,datastausF);
-      //关闭
-      posetive_motor(1);
+  
+    //关闭
+      digitalWrite(valve,LOW); 
+      Set_Pwm(500);
       delay(6000);
       Set_Pwm(0);
-      Serial.print("now is close");
+ 
       delay(1000);
        count0 = 0;
        for (int i = 0; i < 8; i++)
        count0 += ReadCount();
        count0 /= 8;
       client.publish(topic1,datastausR);
-        
-    }
   }
   
 // 4 Task1  json格式传输  反馈一次重量
@@ -195,12 +221,9 @@ void sendADC(void)
       long count = ReadCount() - count0;
       count = ((count - count1)/3000);
       Serial.println(count);
-      snprintf(msgJson, 40, dataWeight1, count); //将称重数据套入dataWeight模板中, 生成的字符串传给msgJson
-      json_len = strlen(msgJson);               // msgJson的长度
-      //client.publish(topic1, msgJson);
-         
-      tasktomotor(count,weight2);
-      vTaskDelay(1000/portTICK_PERIOD_MS); //需要更改，最后用RTOS   一延时就过去执行别的任务
+      
+      tasktomotor(count,weight_default);
+      delay(100); //需要更改，最后用RTOS   一延时就过去执行别的任务
     }
 }
 
@@ -209,6 +232,7 @@ void callback(char *topic, byte *payload, unsigned int length)
 {
   char json[200];
   char *parameter = (char *)malloc(length); 
+   const char *castbegin = (char *)malloc(length);
   /* 解析JSON */
   StaticJsonDocument<200> jsonBuffer2; //声明一个JsonDocument对象，长度200
   
@@ -231,19 +255,41 @@ void callback(char *topic, byte *payload, unsigned int length)
         return;
     }
     JsonObject dataWeight = jsonBuffer2.as<JsonObject>();
-    
-  weight = jsonBuffer2["castweight"];              // 读取整形数据,总重量
-  //castbegin = jsonBuffer2["castbegin"];
+
+   if(strncmp(parameter,"castweight",strlen("castweight"))==0)
+  {
+    if(weight == 0){
+       weight = dataWeight[String("castweight")];              // 读取整形数据,总重量
+       flag = 1;
+      }
+//    else if (weight > 0)    //发现值大于零，应该是想要更改投料的量
+//    {
+//      weight_revise = dataWeight[String("castweight")];
+//      
+//      }
+  }
+     if(strncmp(parameter,"castbegin",strlen("castbegin"))==0)
+  {
+    castbegin = dataWeight["castbegin"];
+  }
  // tasktomotor(weight);
   
-  Serial.println("now:\r\n");
-  Serial.print(weight);
- // Serial.print(castbegin);
-//  if(strcmp(castbegin,"on")== 0)
-//  {
-//    castbegin_num = 1;
-//    }
-  Serial.println();
+  Serial.print("now:\r\n");
+  Serial.println(weight);
+  Serial.println(dataWeight);
+  if(strncmp(parameter,"castweight",strlen("castweight"))!=0)
+  {
+    Serial.println(castbegin);
+    if(strncmp(castbegin,"on",strlen(castbegin))== 0)
+    {
+      castbegin_num = 1;
+      }
+     else if(strncmp(castbegin,"off",strlen(castbegin))== 0)
+     {
+       castbegin_num = 2;
+      }
+      else return;
+  }
   free(parameter);
   Serial.println("--------------------------");
 }
@@ -259,8 +305,8 @@ void setup()
   //联网和硬件设备初始化
   HarewardInit();
 
-  //开启阀门发busy
-  feeding1();
+  
+
     /* 创建5个任务: 订阅/点灯/称重/发布重量/阀口开关
      */
     Serial.print("program in this");
@@ -277,15 +323,20 @@ void setup()
 void loop()
 {
   client.loop();
-//  if(castbegin_num==1)
-//  {
-     sendADC();
-    delay(500);
- //   }
- // else
-  //;
-  digitalWrite(valve,HIGH); 
-  client.publish(topic1,datastausB);
-
-
+  if(castbegin_num==1&&weight>0)
+  {
+    if(flag == 1)
+    {
+      feeding1();
+      flag = 0;
+    }
+      sendADC();
+      delay(100);
+    }
+  else if(castbegin_num == 2)
+  {
+  client.publish(topic1,datastausF);
+  delay(5000);
+  }
+  else  ;
 }

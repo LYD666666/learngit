@@ -21,7 +21,7 @@ const char *password = "sigmaWYU3601";    // Enter WiFi password       sigmaWYU3
 
 // MQTT Broker
 const char *mqtt_broker = "106.14.145.57";
-const char *topic = "feeding";
+const char *topic = "/feeding";
 const char *topic1 = "feeding1";
 const char *mqtt_username = "cwl";
 const char *mqtt_password = "19260817";
@@ -85,8 +85,8 @@ void HarewardInit(void){
   pinMode(IN1, OUTPUT);          //TB6612控制引脚，控制电机1的方向，01为正转，10为反转
   pinMode(IN2, OUTPUT);          //TB6612控制引脚，
   pinMode(PWMA, OUTPUT);         //TB6612控制引脚，电机PWM
-  digitalWrite(IN1, 0);          //TB6612控制引脚拉低
-  digitalWrite(IN2, 0);          //TB6612控制引脚拉低
+  digitalWrite(IN1, LOW);          //TB6612控制引脚拉低
+  digitalWrite(IN2, LOW);          //TB6612控制引脚拉低
 
   ledcSetup(pwm_Channel_1, freq, resolution);  //PWM通道一开启设置  //通道0， 5KHz，10位解析度
   ledcAttachPin(PWMA, pwm_Channel_1);     //PWM通道一和引脚PWMA关联 //pin25定义为通道0的输出引脚
@@ -100,7 +100,6 @@ void HarewardInit(void){
 void setup() {
   // put your setup code here, to run once:
   HarewardInit();
-  Set_Pwm(0);
 }
 
 void loop() {
@@ -124,11 +123,16 @@ void Set_Pwm(int moto1)
    digitalWrite(IN1, HIGH);     
    digitalWrite(IN2, LOW);
   }//TB6612的电平控制
-  else
+  else if(moto1 == 0)
   {
-    digitalWrite(IN1, LOW),       
-    digitalWrite(IN2, HIGH);
+    digitalWrite(IN1, LOW);       
+    digitalWrite(IN2, LOW);
   }//TB6612的电平控制
+  else 
+  {
+    digitalWrite(IN1, LOW);       
+    digitalWrite(IN2, HIGH);
+    }
   
   //功能：限制PWM赋值 
   if (moto1 < -Amplitude)  moto1 = -Amplitude;
